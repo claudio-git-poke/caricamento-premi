@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Carica Carta su Supabase</title>
+    <title>Gestione Carte su Supabase</title>
     <!-- Importiamo il client di Supabase tramite CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
@@ -13,7 +13,8 @@
             margin: 0;
             padding: 20px;
             display: flex;
-            justify-content: center;
+            flex-direction: column;
+            align-items: center;
         }
         .container {
             background: white;
@@ -21,7 +22,8 @@
             border-radius: 8px;
             box-shadow: 0 4px 10px rgba(0,0,0,0.1);
             width: 100%;
-            max-width: 500px;
+            max-width: 600px;
+            margin-bottom: 20px;
         }
         h2 { text-align: center; color: #333; }
         .form-group {
@@ -52,17 +54,50 @@
             cursor: pointer;
         }
         button:hover { background-color: #45a049; }
+        .btn-danger {
+            background-color: #e74c3c;
+            padding: 6px 12px;
+            font-size: 14px;
+            width: auto;
+        }
+        .btn-danger:hover { background-color: #c0392b; }
+        .btn-edit {
+            background-color: #3498db;
+            padding: 6px 12px;
+            font-size: 14px;
+            width: auto;
+            margin-right: 5px;
+        }
+        .btn-edit:hover { background-color: #2980b9; }
         #status {
             margin-top: 15px;
             text-align: center;
             font-weight: bold;
+        }
+        .card-list {
+            list-style: none;
+            padding: 0;
+        }
+        .card-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #fdfdfd;
+            border: 1px solid #ddd;
+            padding: 10px;
+            margin-bottom: 8px;
+            border-radius: 4px;
+        }
+        .card-info {
+            font-size: 14px;
+            color: #333;
         }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Registra Nuova Carta</h2>
+    <h2>Registra / Modifica Carta</h2>
     <form id="cardForm">
         <div class="form-group">
             <label for="rarity">Rarità</label>
@@ -86,28 +121,144 @@
         </div>
 
         <div class="form-group">
-            <label for="cardImage">Immagine Carta</label>
-            <input type="file" id="cardImage" accept="image/*" required>
+            <label for="cardImage">Immagine Carta (Nuova o sostitutiva)</label>
+            <input type="file" id="cardImage" accept="image/*">
+            <small style="color: #666;">Se modifichi solo il testo, puoi lasciare vuoto questo campo se non vuoi cambiare l'immagine.</small>
         </div>
 
-        <button type="submit" id="submitBtn">Carica su Supabase</button>
+        <button type="submit" id="submitBtn">Salva su Supabase</button>
     </form>
     <div id="status"></div>
 </div>
 
+<div class="container">
+    <h2>Carte Esistenti</h2>
+    <button onclick="loadExistingCards()" style="background-color: #3498db; margin-bottom: 15px;">Aggiorna Lista</button>
+    <ul id="cardList" class="card-list">
+        <li>Clicca su "Aggiorna Lista" per visualizzare le carte caricate.</li>
+    </ul>
+</div>
+
 <script>
-    // Le tue credenziali Supabase
     const SUPABASE_URL = 'https://tssgkiytaxmcrodrcrpu.supabase.co';
     const SUPABASE_ANON_KEY = 'sb_publishable_3JHORvzXFoBh7XVVuSqgTg__ezQdQMa';
     
-    // Inizializza il client Supabase
     const { createClient } = supabase;
     const _supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-    // Nomi dei due bucket separati
     const BUCKET_TEXTS = 'cards-texts';
     const BUCKET_IMAGES = 'cards-images';
 
+    // Carica la lista delle carte esistenti scansionando le cartelle
+    async function loadExistingCards() {
+        const cardListUl = document.getElementById('cardList');
+        cardListUl.innerHTML = '<li>Caricamento in corso...</li>';
+
+        const rarities = ['comuni', 'non comuni', 'rare', 'ultra rare', 'leggendarie'];
+        let allCards = [];
+
+        try {
+            for (const rarity of rarities) {
+                // Elenchiamo i file nel bucket dei testi per ogni cartella di rarità
+                const { data, error } = await _supabase.storage
+                    .from(BUCKET_TEXTS)
+                    .list(rarity);
+
+                if (error) {
+                    console.error(`Errore leggendo ${rarity}:`, error.message);
+                    continue;
+                }
+
+                if (data) {
+                    for (const file of data) {
+                        if (file.name.endsWith('.txt')) {
+                            const cardNameClean = file.name.replace('.txt', '');
+                            allCards.push({
+                                rarity: rarity,
+                                name: cardNameClean,
+                                textPath: `${rarity}/${file.name}`
+                            });
+                        }
+                    }
+                }
+            }
+
+            if (allCards.length === 0) {
+                cardListUl.innerHTML = '<li>Nessuna carta trovata.</li>';
+                return;
+            }
+
+            cardListUl.innerHTML = '';
+            for (const card of allCards) {
+                const li = document.createElement('li');
+                li.className = 'card-item';
+                li.innerHTML = `
+                    <div class="card-info">
+                        <strong>${card.name}</strong> <span style="color: #666; font-size: 12px;">(${card.rarity})</span>
+                    </div>
+                    <div>
+                        <button class="btn-edit" onclick="prepareEdit('${card.rarity}', '${card.name}')">Modifica</button>
+                        <button class="btn-danger" onclick="deleteCard('${card.rarity}', '${card.name}')">Elimina</button>
+                    </div>
+                `;
+                cardListUl.appendChild(li);
+            }
+
+        } catch (err) {
+            console.error(err);
+            cardListUl.innerHTML = '<li>Errore nel recupero delle carte.</li>';
+        }
+    }
+
+    // Prepara il form per la modifica scaricando il testo esistente
+    window.prepareEdit = async function(rarity, cardName) {
+        document.getElementById('status').textContent = 'Caricamento dati carta in corso...';
+        document.getElementById('rarity').value = rarity;
+        document.getElementById('cardName').value = cardName;
+
+        try {
+            const { data, error } = await _supabase.storage
+                .from(BUCKET_TEXTS)
+                .download(`${rarity}/${cardName}.txt`);
+
+            if (error) throw error;
+
+            const textContent = await data.text();
+            document.getElementById('cardText').value = textContent;
+            document.getElementById('status').textContent = 'Carta caricata nel form per la modifica.';
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        } catch (err) {
+            console.error(err);
+            alert('Errore nel recuperare il testo della carta: ' + err.message);
+        }
+    };
+
+    // Elimina interamente la carta (testo e immagine)
+    window.deleteCard = async function(rarity, cardName) {
+        if (!confirm(`Sei sicuro di voler eliminare definitivamente "${cardName}" (${rarity})?`)) return;
+
+        try {
+            // Elimina il file di testo
+            const { error: errText } = await _supabase.storage
+                .from(BUCKET_TEXTS)
+                .remove([`${rarity}/${cardName}.txt`]);
+
+            if (errText) throw errText;
+
+            // Elimina l'immagine webp (se esiste)
+            await _supabase.storage
+                .from(BUCKET_IMAGES)
+                .remove([`${rarity}/${cardName}.webp`]);
+
+            alert('Carta eliminata con successo!');
+            loadExistingCards();
+        } catch (err) {
+            console.error(err);
+            alert('Errore durante l\'eliminazione: ' + err.message);
+        }
+    };
+
+    // Gestione invio form (Salvataggio / Modifica con upsert)
     document.getElementById('cardForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         
@@ -119,20 +270,14 @@
         const cardText = document.getElementById('cardText').value;
         const imageFile = document.getElementById('cardImage').files[0];
 
-        if (!imageFile) {
-            alert('Seleziona un\'immagine!');
-            return;
-        }
-
-        // Pulisce il nome per renderlo sicuro come nome file
         const safeName = rawName.toLowerCase().replace(/[^a-z0-9]/g, '_');
 
         statusDiv.style.color = '#007BFF';
-        statusDiv.textContent = 'Elaborazione in corso...';
+        statusDiv.textContent = 'Salvataggio in corso...';
         submitBtn.disabled = true;
 
         try {
-            // 1. Salvataggio del file .txt (upsert: true sovrascrive se esiste già)
+            // 1. Salvataggio / Sovrascrittura del file .txt
             const textBlob = new Blob([cardText], { type: 'text/plain;charset=utf-8' });
             const textPath = `${rarity}/${safeName}.txt`;
 
@@ -142,30 +287,32 @@
 
             if (textError) throw textError;
 
-            // 2. Ridimensionamento, conversione in WebP (465x645) e salvataggio (upsert: true sovrascrive se esiste già)
-            const webpBlob = await resizeAndConvertToWebP(imageFile, 465, 645);
-            const imagePath = `${rarity}/${safeName}.webp`;
+            // 2. Salvataggio / Sovrascrittura dell'immagine (solo se è stata caricata una nuova immagine)
+            if (imageFile) {
+                const webpBlob = await resizeAndConvertToWebP(imageFile, 465, 645);
+                const imagePath = `${rarity}/${safeName}.webp`;
 
-            const { error: imageError } = await _supabase.storage
-                .from(BUCKET_IMAGES)
-                .upload(imagePath, webpBlob, { upsert: true });
+                const { error: imageError } = await _supabase.storage
+                    .from(BUCKET_IMAGES)
+                    .upload(imagePath, webpBlob, { upsert: true });
 
-            if (imageError) throw imageError;
+                if (imageError) throw imageError;
+            }
 
             statusDiv.style.color = 'green';
-            statusDiv.textContent = 'Caricamento completato con successo (file sovrascritti se esistenti)!';
+            statusDiv.textContent = 'Salvato con successo!';
             document.getElementById('cardForm').reset();
+            loadExistingCards();
 
         } catch (error) {
             console.error(error);
             statusDiv.style.color = 'red';
-            statusDiv.textContent = 'Errore durante il caricamento: ' + error.message;
+            statusDiv.textContent = 'Errore: ' + error.message;
         } finally {
             submitBtn.disabled = false;
         }
     });
 
-    // Funzione di supporto per ridimensionare l'immagine e convertirla in WebP
     function resizeAndConvertToWebP(file, targetWidth, targetHeight) {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();
@@ -177,15 +324,10 @@
                     canvas.width = targetWidth;
                     canvas.height = targetHeight;
                     const ctx = canvas.getContext('2d');
-
                     ctx.drawImage(img, 0, 0, targetWidth, targetHeight);
-
                     canvas.toBlob((blob) => {
-                        if (blob) {
-                            resolve(blob);
-                        } else {
-                            reject(new Error('Conversione dell\'immagine fallita.'));
-                        }
+                        if (blob) resolve(blob);
+                        else reject(new Error('Conversione immagine fallita.'));
                     }, 'image/webp', 0.85);
                 };
                 img.onerror = (err) => reject(err);
@@ -194,6 +336,9 @@
             reader.readAsDataURL(file);
         });
     }
+
+    // Carica automaticamente la lista all'apertura della pagina
+    window.onload = loadExistingCards;
 </script>
 
 </body>
